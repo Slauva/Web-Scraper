@@ -88,9 +88,12 @@ class Scraper:
         else:
             return [self.URL + a['href'] for a in _a]
 
-    def formatData(self, data: str):
-        r = data.split()
+    def formatData(self, data):
+        r = data
+        if type(r) != list:
+            r = r.split()
         r[-2] =  self.getMonth(r[-2])
+        if len(r[0]) == 1: r[0] = '0'+ r[0]
         return '.'.join([r[0], r[-2], r[-1]])
 
     def fixText(self, string: str):
@@ -177,6 +180,8 @@ class Scraper:
     def save(self, path = 'events.csv'):
         with open(path,  'w', encoding='utf-8-sig', newline='') as csv_file:
             writer = csv.writer(csv_file, delimiter=',')
+            header = ['Title', 'Description', 'Date', 'Time', 'Address', 'Link']
+            writer.writerow(header)
             for line in self.events:
                 writer.writerow(line)
         print(self.__class__.__name__, f': saved by name <{path}>')
@@ -196,17 +201,21 @@ class MeetUp(Scraper):
         try:
             descr = soup.select_one('.event-description.runningText > p').text
         except:
-            print(url)
             descr = ''
-        time  = soup.select_one('.eventTimeDisplay > time')
-        data  = time.select_one('.eventTimeDisplay-startDate > span').text.split(',')[-1].replace('г.', '')
-        data = self.formatData(data)
-        _time = time.select_one('span > span > span').text + ' - ' + time.select_one('.eventTimeDisplay-endDate > span > span').text
+        time  = soup.select_one('.eventTimeDisplay > time').text.split()
+        if len(time) > 8:
+            t = time[5]
+            d1, d2 = time[1:4], time[8:11]
+            date, to_date = map(self.formatData, [d1, d2])
+            _time = t
+        else:
+            date = self.formatData(time[1:4])
+            _time = time[-4].replace('г.', '') + ' - ' + time[-2]
         try:
             address = soup.select_one('address').text
         except:
             address = ''
-        return [self.fixText(x) for x in [title, descr, data, _time, address, url]]
+        return [self.fixText(x) for x in [title, descr, date, _time, address, url]]
 
 class Leader_ID(Scraper):
 
@@ -235,9 +244,11 @@ class TimePad(Scraper):
         year = TimePad.TODAY.year if len(data) != 7 else data[2]
         if TimePad.MONTHS.get(data[1].lower()) != None:
             month = TimePad.MONTHS.get(data[1].lower())
+            if len(data[0]) == 1: data[0] = '0'+ data[0]
             day = f'{data[0]}.{month}.{year}'
         else:
             month = data[1]
+            if len(data[0]) == 1: data[0] = '0'+ data[0]
             day = f'{data[0]} {month} {year}'
         time = f'{data[-3]} - {data[-1]}'
         return [day, time]
@@ -252,9 +263,19 @@ class TimePad(Scraper):
         
         try:
             buf = soup.select_one('.ep3-pagesummary__time-begin > span').text.strip().replace('\xa0', ' ')
-            buf = self.parseTime(buf)
-            data = buf[0]
-            time = buf[1]
+            if len(buf.split()) > 7:
+                buf = buf.split()
+                try: yy = int(buf[-1])
+                except: yy = TimePad.TODAY.year
+                time = buf[1]
+                if len(buf[2]) == 1: buf[2] = '0'+ buf[2]
+                day = buf[2]
+                month = buf[3]
+                data = f'{day}.{self.getMonth(month)}.{yy}'
+            else:
+                buf = self.parseTime(buf)
+                data = buf[0]
+                time = buf[1]
             address = soup.select_one('.ep3-pagesummary__place-adress > span').text.strip()
         except:
             event_info = soup.select('.mcards > div')
@@ -262,11 +283,11 @@ class TimePad(Scraper):
             addressSet = event_info[1].select_one('.tcaption.tcaption--block').text.strip().split()[:-3]
             
             ind = dataSet.index('Добавить')
-            dataSet = dataSet[:ind] 
-            print(dataSet)
+            dataSet = dataSet[:ind]
 
             time = dataSet[-1].split('–')
             time = f'{time[0]} - {time[1]}'
+            if len(dataSet[0]) == 1: dataSet[0] = '0'+ dataSet[0]
             if len(dataSet) == 4:
                 data = f'{dataSet[0]}.{self.getMonth(dataSet[1].lower())}.{dataSet[2]}'
             else:
@@ -280,9 +301,9 @@ if __name__ == "__main__":
     t0 = time()
     leaderid = Leader_ID('https://leader-id.ru/events/?CityIds%5B%5D=887', event_selector='.event.overflow_event > a')
     meetup = MeetUp('https://www.meetup.com/ru-RU/find/tech/?allMeetups=false&radius=150&userFreeform=Казань&mcId=c1036275&mcName=Казань%2C+RU&sort=founded_date', event_selector='div > a.eventCard--link',  group_selector='li > div > a.display-none') 
-    timepad = TimePad([ "https://timepad.ru/afisha/naberezhnye-chelny/search/it/all/","https://timepad.ru/afisha/kazan/search/it/all/","https://timepad.ru/afisha/innopolis/search/it/all/"], event_selector='.meventcard > a', break_selector= '.meventcard--passed')
+    timepad = TimePad([ "https://timepad.ru/afisha/naberezhnye-chelny/search/it/all/","https://timepad.ru/afisha/kazan/search/it/all/","https://timepad.ru/afisha/innopolis/search/it/all/"], event_selector='.meventcard > a', break_selector='.meventcard--passed') 
     #=====<Save>=====
-    leaderid.save(path = 'leaderId.csv')
-    meetup.save(path = 'meetUp.csv')
-    timepad.save(path = 'timepad.csv')
+    leaderid.save(path = 'results/leaderId.csv')
+    meetup.save(path = 'results/meetUp.csv')
+    timepad.save(path = 'results/timepad.csv')
     print(time() - t0, flush=True)
