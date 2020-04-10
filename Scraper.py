@@ -11,9 +11,12 @@ import csv
 
 
 def run(coroutine):
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     loop.run_until_complete(coroutine)
+    asyncio.set_event_loop(None)
     loop.close()
+
 
 if not sys.version_info >= (3, 7):
     asyncio.create_task = asyncio.ensure_future
@@ -22,7 +25,6 @@ if not sys.version_info >= (3, 7):
 
 
 class Scraper:
-
     TODAY = datetime.now()
 
     MONTHS = {
@@ -40,14 +42,14 @@ class Scraper:
         'декабря': '12',
     }
 
-    def __init__(self, url: str, event_selector: str, group_selector = None, break_selector = None):
+    def __init__(self, url: str, event_selector: str, group_selector=None, break_selector=None):
         self.eSelector = event_selector
         self.headers = self.getHeaders()
         self.break_selector = break_selector
         self.URL = self.getBasicURL(url)
         self.event_links = list()
         self.events = list()
-        
+
     def getBasicURL(self, url):
         r = url.split('/')
         return '/'.join(r[:3])
@@ -55,7 +57,7 @@ class Scraper:
     def getMonth(self, month):
         month = month.lower()
         r = Scraper.MONTHS.get(month)
-        return r if r!=None else month
+        return r if r != None else month
 
     def getHeaders(self):
         return {'User-Agent': generate_user_agent(device_type='desktop', os=('mac', 'linux'))}
@@ -72,7 +74,7 @@ class Scraper:
         pattern = compile('http')
         return pattern.match(url) != None
 
-    def getLinks(self, soup: BeautifulSoup, selector: str, break_selector:str = None):
+    def getLinks(self, soup: BeautifulSoup, selector: str, break_selector: str = None):
         """
             Function get all links from the page by class selector
         """
@@ -92,8 +94,8 @@ class Scraper:
         r = data
         if type(r) != list:
             r = r.split()
-        r[-2] =  self.getMonth(r[-2])
-        if len(r[0]) == 1: r[0] = '0'+ r[0]
+        r[-2] = self.getMonth(r[-2])
+        if len(r[0]) == 1: r[0] = '0' + r[0]
         return '.'.join([r[0], r[-2], r[-1]])
 
     def fixText(self, string: str):
@@ -120,7 +122,7 @@ class Scraper:
         page = self.getPage(url)
         soup = BeautifulSoup(page, 'lxml')
         groups = self.getLinks(soup, group_selector, self.break_selector)
-        return [link[:-1]+pattern for link in groups]
+        return [link[:-1] + pattern for link in groups]
 
     async def fetch(self, url, session):
         async with session.get(url) as response:
@@ -153,17 +155,22 @@ class Scraper:
             if sys.version_info >= (3, 7):
                 done = await asyncio.gather(*tasks)
             else:
-                done, _ = await asyncio.gather(tasks)
+                done, _ = await asyncio.gather(tasks, return_when=asyncio.ALL_COMPLETED)
+
 
         for link in done:
-            self.event_links.extend(link)
+            if not sys.version_info >= (3, 7):
+                self.event_links.extend(link.result())
+            else:
+                self.event_links.extend(link)
+
         print('Step 1 has finished', end='\r')
 
         if self.event_links == []: return []
 
         # Scrape all events
         tasks = []
-        async with ClientSession(headers = self.headers) as session:
+        async with ClientSession(headers=self.headers) as session:
             for event in self.event_links:
                 task = asyncio.create_task(self.spider(event, session))
                 tasks.append(task)
@@ -174,25 +181,26 @@ class Scraper:
                 await asyncio.gather(tasks)
 
         print('Step 2 has finished', end='\r')
-        print(' '*100, end='\r')
+        print(' ' * 100, end='\r')
         print(self.__class__.__name__, ': success')
 
-    def save(self, path = 'events.csv'):
-        with open(path,  'w', encoding='utf-8-sig', newline='') as csv_file:
+    def save(self, path='events.csv'):
+        with open(path, 'w', encoding='utf-8-sig', newline='') as csv_file:
             writer = csv.writer(csv_file, delimiter=',')
             header = ['Title', 'Description', 'Date', 'Time', 'Address', 'Link']
             writer.writerow(header)
             for line in self.events:
                 writer.writerow(line)
         print(self.__class__.__name__, f': saved by name <{path}>')
-    
+
     def getInformation(self, soup: BeautifulSoup, url: str):
         raise NotImplementedError('Function getInformation has not been creating')
 
+
 class MeetUp(Scraper):
-    def __init__(self, url: str, event_selector: str, group_selector = None):
+    def __init__(self, url: str, event_selector: str, group_selector=None):
         super().__init__(url, event_selector, group_selector=group_selector)
-        
+
         groups = self.getEventsByGroup(url, group_selector, pattern='/events/')
         asyncio.run(self.scrape(groups))
 
@@ -202,7 +210,7 @@ class MeetUp(Scraper):
             descr = soup.select_one('.event-description.runningText > p').text
         except:
             descr = ''
-        time  = soup.select_one('.eventTimeDisplay > time').text.split()
+        time = soup.select_one('.eventTimeDisplay > time').text.split()
         if len(time) > 8:
             t = time[5]
             d1, d2 = time[1:4], time[8:11]
@@ -217,13 +225,14 @@ class MeetUp(Scraper):
             address = ''
         return [self.fixText(x) for x in [title, descr, date, _time, address, url]]
 
+
 class Leader_ID(Scraper):
 
     def __init__(self, url: str, event_selector: str):
         super().__init__(url, event_selector)
         asyncio.run(self.scrape([url]))
 
-    def getInformation(self,soup: BeautifulSoup, url: str):
+    def getInformation(self, soup: BeautifulSoup, url: str):
         title = soup.select_one('h2.article-header__title').text
         descr = soup.select_one('p.article__intro.mb-5').text
         info = soup.select('.article__sidebar-content.aside__content > p')
@@ -232,6 +241,7 @@ class Leader_ID(Scraper):
         time = ' '.join(info[3].text.split()[1:])
         address = ' '.join(info[4].text.split()[1:])
         return list(map(self.fixText, [title, descr, data, time, address, url]))
+
 
 class TimePad(Scraper):
 
@@ -244,15 +254,14 @@ class TimePad(Scraper):
         year = TimePad.TODAY.year if len(data) != 7 else data[2]
         if TimePad.MONTHS.get(data[1].lower()) != None:
             month = TimePad.MONTHS.get(data[1].lower())
-            if len(data[0]) == 1: data[0] = '0'+ data[0]
+            if len(data[0]) == 1: data[0] = '0' + data[0]
             day = f'{data[0]}.{month}.{year}'
         else:
             month = data[1]
-            if len(data[0]) == 1: data[0] = '0'+ data[0]
+            if len(data[0]) == 1: data[0] = '0' + data[0]
             day = f'{data[0]} {month} {year}'
         time = f'{data[-3]} - {data[-1]}'
         return [day, time]
-
 
     def getInformation(self, soup: BeautifulSoup, url: str):
         title = soup.select_one('head > title').text
@@ -260,15 +269,17 @@ class TimePad(Scraper):
             descr = soup.find('meta', name='description')['content']
         except:
             descr = soup.find('meta', property="og:description")['content']
-        
+
         try:
             buf = soup.select_one('.ep3-pagesummary__time-begin > span').text.strip().replace('\xa0', ' ')
             if len(buf.split()) > 7:
                 buf = buf.split()
-                try: yy = int(buf[-1])
-                except: yy = TimePad.TODAY.year
+                try:
+                    yy = int(buf[-1])
+                except:
+                    yy = TimePad.TODAY.year
                 time = buf[1]
-                if len(buf[2]) == 1: buf[2] = '0'+ buf[2]
+                if len(buf[2]) == 1: buf[2] = '0' + buf[2]
                 day = buf[2]
                 month = buf[3]
                 data = f'{day}.{self.getMonth(month)}.{yy}'
@@ -281,29 +292,29 @@ class TimePad(Scraper):
             event_info = soup.select('.mcards > div')
             dataSet = event_info[0].select_one('.tcaption.tcaption--block').text.strip().split()[3:]
             addressSet = event_info[1].select_one('.tcaption.tcaption--block').text.strip().split()[:-3]
-            
+
             ind = dataSet.index('Добавить')
             dataSet = dataSet[:ind]
 
             time = dataSet[-1].split('–')
             time = f'{time[0]} - {time[1]}'
-            if len(dataSet[0]) == 1: dataSet[0] = '0'+ dataSet[0]
+            if len(dataSet[0]) == 1: dataSet[0] = '0' + dataSet[0]
             if len(dataSet) == 4:
                 data = f'{dataSet[0]}.{self.getMonth(dataSet[1].lower())}.{dataSet[2]}'
             else:
                 data = f'{dataSet[0]}.{self.getMonth(dataSet[1].lower())}.{TimePad.TODAY.year}'
             address = ' '.join(addressSet)
-        
+
         return [self.fixText(x) for x in [title, descr, data, time, address, url]]
 
 
 if __name__ == "__main__":
     t0 = time()
     leaderid = Leader_ID('https://leader-id.ru/events/?CityIds%5B%5D=887', event_selector='.event.overflow_event > a')
-    meetup = MeetUp('https://www.meetup.com/ru-RU/find/tech/?allMeetups=false&radius=150&userFreeform=Казань&mcId=c1036275&mcName=Казань%2C+RU&sort=founded_date', event_selector='div > a.eventCard--link',  group_selector='li > div > a.display-none') 
-    timepad = TimePad([ "https://timepad.ru/afisha/naberezhnye-chelny/search/it/all/","https://timepad.ru/afisha/kazan/search/it/all/","https://timepad.ru/afisha/innopolis/search/it/all/"], event_selector='.meventcard > a', break_selector='.meventcard--passed') 
-    #=====<Save>=====
-    leaderid.save(path = 'results/leaderId.csv')
-    meetup.save(path = 'results/meetUp.csv')
-    timepad.save(path = 'results/timepad.csv')
+    meetup = MeetUp('https://www.meetup.com/ru-RU/find/tech/?allMeetups=false&radius=150&userFreeform=Казань&mcId=c1036275&mcName=Казань%2C+RU&sort=founded_date', event_selector='div > a.eventCard--link', group_selector='li > div > a.display-none')
+    timepad = TimePad(["https://timepad.ru/afisha/naberezhnye-chelny/search/it/all/", "https://timepad.ru/afisha/kazan/search/it/all/", "https://timepad.ru/afisha/innopolis/search/it/all/"], event_selector='.meventcard > a', break_selector='.meventcard--passed')
+    # =====<Save>=====
+    leaderid.save(path='results/leaderId.csv')
+    meetup.save(path='results/meetUp.csv')
+    timepad.save(path='results/timepad.csv')
     print(time() - t0, flush=True)
